@@ -51,6 +51,10 @@ variable "ig_name" {
 
 }
 
+variable "vpcop_id"{}
+
+variable "subnets"{}
+
 resource "aws_vpc" "vpc_csye6225_f" {
   cidr_block                       = "${var.VPC_cidrBlock}"
   enable_dns_support               = true
@@ -61,6 +65,12 @@ resource "aws_vpc" "vpc_csye6225_f" {
     Name = "${var.vpc_name}"
   }
 }
+
+output "vpcop_id"{
+    value = "${aws_vpc.vpc_csye6225_f.id}"
+}
+
+
 variable "subnet-name" {
   type    = "string"
   default = "subnet_csye6225_e"
@@ -69,7 +79,8 @@ variable "subnet-name" {
 resource "aws_subnet" "subnet_csye6225_e_1" {
   # cidr_block = "10.0.1.0/24"
   cidr_block = "${var.subnet_1_cidrBlock}"
-  vpc_id     = "${aws_vpc.vpc_csye6225_f.id}"
+  #vpc_id     = "${aws_vpc.vpc_csye6225_f.id}"
+  vpc_id     = "${var.vpcop_id}"
 
   # count = 3
   availability_zone       = "${var.region}a"
@@ -103,6 +114,11 @@ resource "aws_subnet" "subnet_csye6225_e_3" {
   tags = {
     Name = "${var.subnet-name}3"
   }
+}
+
+output "subnets"{
+  # value = flatten(["${aws_subnet.subnet_csye6225_e_1.id}", "${aws_subnet.subnet_csye6225_e_2.id}", "${aws_subnet.subnet_csye6225_e_3.id}"])
+  value = ["${aws_subnet.subnet_csye6225_e_1.id}", "${aws_subnet.subnet_csye6225_e_2.id}", "${aws_subnet.subnet_csye6225_e_3.id}"]
 }
 
 resource "aws_internet_gateway" "ig_csye6225_e" {
