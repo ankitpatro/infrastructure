@@ -4,10 +4,18 @@ provider "aws" {
   region  = "${var.region}"
 }
 
+variable "user_account_id" {
+  default = "787647769598"
+}
 variable "VPC_cidrBlock" {
   default = "10.0.0.0/16"
 
 }
+
+variable "domain_name" {
+  default = "ankitpatro.me"
+}
+
 
 variable "region" {
   default = "us-east-1"
@@ -41,18 +49,19 @@ module "network_mod" {
 module "application_mod" {
   source = "../infrastructure/app"
   # domain-name   = ""
-  ami_id = "ami-0c2744aad3dd08570"
+  ami_id = "ami-00d379040eda1693a"
   # ami_name  = "csye6225_1573741914"
   # ami_key_pair_name =  "csye6225_ssh"
-  instance_type = "t2.micro"
-  volume_size   = "20"
-  volume_type   = "gp2"
-  region        = "${var.region}"
-  profile       = "${var.profile}"
-  VPC_cidrBlock = "10.0.0.0/16"
-  # account_id  = ""
-  vpcop_id = "${module.network_mod.vpcop_id}"
-  subnets  = "${module.network_mod.subnets}"
+  instance_type   = "t2.micro"
+  volume_size     = "20"
+  volume_type     = "gp2"
+  region          = "${var.region}"
+  profile         = "${var.profile}"
+  VPC_cidrBlock   = "10.0.0.0/16"
+  domain_name     = "${var.domain_name}"
+  vpcop_id        = "${module.network_mod.vpcop_id}"
+  subnets         = "${module.network_mod.subnets}"
+  user_account_id = "${var.user_account_id}"
 
 }
 
