@@ -5,11 +5,15 @@ provider "aws" {
 }
 
 variable "user_account_id" {
-  default = "787647769598"
+  default = "684177922449"
 }
 variable "VPC_cidrBlock" {
   default = "10.0.0.0/16"
 
+}
+
+variable "ami_id" {
+  default = "ami-036c1c2b62c7126c7"
 }
 
 variable "domain_name" {
@@ -49,9 +53,11 @@ module "network_mod" {
 module "application_mod" {
   source = "../infrastructure/app"
   # domain-name   = ""
-  ami_id = "ami-00d379040eda1693a"
+  # ami_id = "ami-036c1c2b62c7126c7"
+  
   # ami_name  = "csye6225_1573741914"
   # ami_key_pair_name =  "csye6225_ssh"
+  ami_id          = "${var.ami_id}"
   instance_type   = "t2.micro"
   volume_size     = "20"
   volume_type     = "gp2"
