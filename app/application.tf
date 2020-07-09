@@ -210,6 +210,11 @@ resource "aws_iam_role_policy_attachment" "ec2CodedeployRolePolicyAttach" {
 
 }
 
+resource "aws_iam_role_policy_attachment" "ec2CloudWatchRolePolicyAttach" {
+  role       = "${aws_iam_role.EC2-CSYE6225.name}"
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
 resource "aws_iam_user_policy_attachment" "test-attach1" {
   user       = "cicd"
   policy_arn = "${aws_iam_policy.circleci-ec2-ami.arn}"
