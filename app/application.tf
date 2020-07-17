@@ -246,34 +246,38 @@ resource "aws_security_group" "application" {
   vpc_id      = "${var.vpcop_id}"
   ingress {
     description = "TLS from VPC"
-    cidr_blocks = ["0.0.0.0/0"]
+    # cidr_blocks = ["0.0.0.0/0"]
     # cidr_blocks = "${var.VPC_cidrBlock}"
     from_port = 22
     to_port   = 22
     protocol  = "tcp"
+    security_groups = ["${aws_security_group.loadbalancer.id}"]
   }
   ingress {
-    cidr_blocks = ["0.0.0.0/0"]
+    # cidr_blocks = ["0.0.0.0/0"]
     # cidr_blocks = "${var.VPC_cidrBlock}"
     from_port = 80
     to_port   = 80
     protocol  = "tcp"
+    security_groups = ["${aws_security_group.loadbalancer.id}"]
   }
 
   ingress {
-    cidr_blocks = ["0.0.0.0/0"]
+    # cidr_blocks = ["0.0.0.0/0"]
     # cidr_blocks = "${var.VPC_cidrBlock}"
     from_port = 443
     to_port   = 443
     protocol  = "tcp"
+    security_groups = ["${aws_security_group.loadbalancer.id}"]
   }
 
   ingress {
-    cidr_blocks = ["0.0.0.0/0"]
+    # cidr_blocks = ["0.0.0.0/0"]
     # cidr_blocks = "${var.VPC_cidrBlock}"
     from_port = 8080
     to_port   = 8080
     protocol  = "tcp"
+    security_groups = ["${aws_security_group.loadbalancer.id}"]
   }
 
   egress {
@@ -305,6 +309,222 @@ resource "aws_security_group_rule" "ingress-database-rule" {
   source_security_group_id = "${aws_security_group.application.id}"
 }
 
+##LOAD BALANCER SECURITY GROUP
+resource "aws_security_group" "loadbalancer" {
+  name          = "loadbalancer_security_group"
+  vpc_id        = "${var.vpcop_id}"
+  ingress{
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks  = ["0.0.0.0/0"]
+  }
+  # Egress is used here to communicate anywhere with any given protocol
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+  tags          = {
+    Name        = "LoadBalancer Security Group"
+    
+  }
+}
+
+# ====================== EC2 Launch Configuration ===========================
+resource "aws_launch_configuration" "asg_launch_config" {
+  name   = "asg_launch_config"
+  image_id      = "${var.ami_id}"
+  instance_type = "${var.instance_type}"
+  key_name      = "${aws_key_pair.publicKey.key_name}"
+  associate_public_ip_address = true
+  security_groups = ["${aws_security_group.application.id}"]
+  
+  user_data = "${templatefile("userdata.sh",
+		{
+			s3_bucket_name = "${aws_s3_bucket.bucket.bucket}",
+			aws_db_endpoint = "${aws_db_instance.WebAppRDS.endpoint}",
+			aws_db_name = "${aws_db_instance.WebAppRDS.name}",
+			aws_db_username = "${aws_db_instance.WebAppRDS.username}",
+			aws_db_password = "${aws_db_instance.WebAppRDS.password}",
+			aws_region = "${var.region}",
+			aws_profile = "${var.profile}"
+		})}"
+
+  iam_instance_profile = "${aws_iam_instance_profile.instance_profile1.name}"
+  
+  root_block_device {
+		volume_size = "${var.volume_size}"
+		volume_type = "${var.volume_type}"
+	}
+  lifecycle {
+    create_before_destroy = true
+  }
+  depends_on = [
+    "aws_security_group.application"
+  ]
+}
+
+# ============================ Autoscaling group =========================
+resource "aws_autoscaling_group" "ec2_asg" {
+  name                 = "ec2_asg"
+  launch_configuration = "${aws_launch_configuration.asg_launch_config.name}"
+  min_size             = 2
+  max_size             = 5
+  desired_capacity     = 2
+  default_cooldown     = 60
+  health_check_type    = "ELB"
+  vpc_zone_identifier  = var.subnets
+  lifecycle {
+    create_before_destroy = true
+  }
+  tag {
+    key                 = "Name"
+    value               = "WebApp EC2 Instance"
+    # Name = "WebApp EC2 Instance"
+    propagate_at_launch = true
+  }
+  depends_on = [
+    "aws_launch_configuration.asg_launch_config",
+    "var.subnets",
+    "aws_lb_target_group.lb_tg"
+  ]
+}
+
+#---------------------------- Autoscaling Policies ---------------------------
+# SCALE - UP Policy
+resource "aws_autoscaling_policy" "asg_scaleUp" {
+  name                   = "WebServerScaleUpPolicy"
+  scaling_adjustment     = "1"
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = "60"
+  autoscaling_group_name = "${aws_autoscaling_group.ec2_asg.name}"
+  policy_type = "SimpleScaling"
+}
+
+# SCALE - DOWN Policy
+resource "aws_autoscaling_policy" "asg_scaleDwn" {
+  name                   = "WebServerScaleDownPolicy"
+  scaling_adjustment     = "-1"
+  adjustment_type        = "ChangeInCapacity"
+  cooldown               = "60"
+  autoscaling_group_name = "${aws_autoscaling_group.ec2_asg.name}"
+  policy_type = "SimpleScaling"
+}
+#SCALE - UP Policy: CPU
+resource "aws_cloudwatch_metric_alarm" "up-cpu-alarm" {
+  alarm_name = "up-cpu-alarm"
+  alarm_description = "Scale-up if CPU > 90% for 10 minutes"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods = "1"
+  metric_name = "CPUUtilization"
+  namespace = "AWS/EC2"
+  period = "60"
+  statistic = "Average"
+  threshold = "40"
+  alarm_actions = ["${aws_autoscaling_policy.asg_scaleUp.arn}"]
+  # comparison_operator = "GreaterThanThreshold"
+  dimensions = "${
+      		map(
+     		"AutoScalingGroupName", "${aws_autoscaling_group.ec2_asg.name}",
+    		)
+  	}"
+}
+
+#SCALE - DOWN Policy: CPU
+resource "aws_cloudwatch_metric_alarm" "down-cpu-alarm" {
+  alarm_name = "down-cpu-alarm"
+  alarm_description = "Scale-down if CPU < 70% for 10 minutes"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods = "1"
+  metric_name = "CPUUtilization"
+  namespace = "AWS/EC2"
+  period = "60"
+  statistic = "Average"
+  threshold = "30"
+  alarm_actions = ["${aws_autoscaling_policy.asg_scaleDwn.arn}"]
+  # comparison_operator = "LessThanThreshold"
+  dimensions = "${
+      		map(
+     		"AutoScalingGroupName", "${aws_autoscaling_group.ec2_asg.name}",
+    		)
+  	}"
+}
+
+#=================LOAD BALANCER=================================
+
+resource "aws_lb" "alb" {
+  name = "alb"
+  subnets = "${var.subnets}"
+  load_balancer_type = "application"
+  # security_groups = ["${aws_security_group.application.id}"]
+  security_groups    = ["${aws_security_group.loadbalancer.id}"]
+  internal = false
+  # enable_deletion_protection = true
+  tags = {
+    Name = "terraform-alb"
+  }
+  #target_group
+}
+
+resource "aws_lb_listener" "lb_listener1" {
+  load_balancer_arn = "${aws_lb.alb.arn}"
+  port              = "80"
+  protocol          = "HTTP"
+  default_action {
+    type             = "forward"
+    target_group_arn = "${aws_lb_target_group.lb_tg.arn}"
+  }
+}
+
+
+
+resource "aws_lb_target_group" "lb_tg" {
+  name        = "tf-lb-tg"
+  port        = "8080"
+  protocol    = "HTTP"
+  # target_type = "ip"
+  vpc_id      = "${var.vpcop_id}"
+  tags        = {
+      name    = "tf-lb-tg"
+  }
+  # health_check {
+  #     healthy_threshold = 3
+  #     unhealthy_threshold = 5
+  #     timeout = 5
+  #     interval = 30
+  #     path = "/apphealthstatus"
+  #     port = "8080"
+  #     matcher = "200"
+  # }
+
+  stickiness {
+    type = "lb_cookie"
+   
+  }
+
+}
+
+resource "aws_alb_listener_rule" "listener_rule" {
+  listener_arn = "${aws_lb_listener.lb_listener1.arn}"  
+  priority     = 100   
+  action {    
+    type             = "forward"    
+    target_group_arn = "${aws_lb_target_group.lb_tg.arn}"  
+  }   
+  condition {    
+    field  = "path-pattern"    
+    values = ["/*"]  
+  }
+}
+
+
+#Autoscaling Attachment
+resource "aws_autoscaling_attachment" "asg_targetgroup" {
+  alb_target_group_arn   = "${aws_lb_target_group.lb_tg.arn}"
+  autoscaling_group_name = "${aws_autoscaling_group.ec2_asg.id}"
+}
 
 
 #----------RDS DB subnet group resource ---------------------
@@ -411,36 +631,36 @@ resource "aws_db_instance" "WebAppRDS" {
 
 #----------EC2 Instance ---------------------
 
-resource "aws_instance" "ec2-instance" {
-  ami = var.ami_id
-  # security_groups = ["${aws_security_group.application.id}"]
-  key_name                = "${aws_key_pair.publicKey.key_name}"
-  vpc_security_group_ids  = ["${aws_security_group.application.id}"]
-  depends_on              = [aws_db_instance.WebAppRDS]
-  iam_instance_profile    = "${aws_iam_instance_profile.instance_profile1.name}"
-  instance_type           = "${var.instance_type}"
-  subnet_id               = var.subnets[0]
-  disable_api_termination = "false"
-  root_block_device {
-    volume_size = "${var.volume_size}"
-    volume_type = "${var.volume_type}"
-  }
-  tags = {
-    Name = "WebApp EC2 Instance"
-  }
+# resource "aws_instance" "ec2-instance" {
+#   ami = var.ami_id
+#   # security_groups = ["${aws_security_group.application.id}"]
+#   key_name                = "${aws_key_pair.publicKey.key_name}"
+#   vpc_security_group_ids  = ["${aws_security_group.application.id}"]
+#   depends_on              = [aws_db_instance.WebAppRDS]
+#   iam_instance_profile    = "${aws_iam_instance_profile.instance_profile1.name}"
+#   instance_type           = "${var.instance_type}"
+#   subnet_id               = var.subnets[0]
+#   disable_api_termination = "false"
+#   root_block_device {
+#     volume_size = "${var.volume_size}"
+#     volume_type = "${var.volume_type}"
+#   }
+#   tags = {
+#     Name = "WebApp EC2 Instance"
+#   }
 
-  user_data = "${templatefile("userdata.sh",
-    {
-      s3_bucket_name  = "${aws_s3_bucket.bucket.bucket}",
-      aws_db_endpoint = "${aws_db_instance.WebAppRDS.endpoint}",
-      aws_db_name     = "${aws_db_instance.WebAppRDS.name}",
-      aws_db_username = "${aws_db_instance.WebAppRDS.username}",
-      aws_db_password = "${aws_db_instance.WebAppRDS.password}",
-      aws_region      = "${var.region}",
-      aws_profile     = "${var.profile}",
-      host_name       = "${var.domain_name}"
-  })}"
-}
+#   user_data = "${templatefile("userdata.sh",
+#     {
+#       s3_bucket_name  = "${aws_s3_bucket.bucket.bucket}",
+#       aws_db_endpoint = "${aws_db_instance.WebAppRDS.endpoint}",
+#       aws_db_name     = "${aws_db_instance.WebAppRDS.name}",
+#       aws_db_username = "${aws_db_instance.WebAppRDS.username}",
+#       aws_db_password = "${aws_db_instance.WebAppRDS.password}",
+#       aws_region      = "${var.region}",
+#       aws_profile     = "${var.profile}",
+#       host_name       = "${var.domain_name}"
+#   })}"
+# }
 
 # ====================== DynamoDB table ===========================
 
@@ -515,6 +735,7 @@ resource "aws_codedeploy_deployment_group" "csye6225-webapp-deployment" {
   deployment_group_name  = "csye6225-webapp-deployment"
   deployment_config_name = "CodeDeployDefault.AllAtOnce"
   service_role_arn       = "${aws_iam_role.codedeploysrv.arn}"
+  autoscaling_groups = ["${aws_autoscaling_group.ec2_asg.name}"]
   ec2_tag_filter {
     key   = "Name"
     type  = "KEY_AND_VALUE"
@@ -532,6 +753,30 @@ resource "aws_codedeploy_deployment_group" "csye6225-webapp-deployment" {
   #   alarms  = ["Deployment-Alarm"]
   #   enabled = true
   # }
+    load_balancer_info{
+	  target_group_info{
+		  name = "${aws_lb_target_group.lb_tg.name}"
+	  }
+  }
+}
+
+# ================================ ROUTE 53 =========================================
+# resource "aws_route53_zone" "routezone" {
+#   # name = "${var.domain_name}"
+#   name = "prod.ankitpatro.me"
+  
+# }
+
+resource "aws_route53_record" "route" {
+  zone_id = "Z0089045TSHQ6TRWHLJC"
+  name    = "prod.ankitpatro.me"
+  type    = "A"
+
+  alias {
+    name                   = "${aws_lb.alb.dns_name}"
+    zone_id                = "${aws_lb.alb.zone_id}"
+    evaluate_target_health = true
+  }
 }
 
 
