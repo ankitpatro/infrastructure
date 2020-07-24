@@ -6,6 +6,8 @@ sudo echo export "DB_PASSWORD='${aws_db_password}'" >> /etc/environment
 sudo echo export "S3_BUCKET_NAME='${s3_bucket_name}'" >> /etc/environment
 sudo echo export "REGION='${aws_region}'" >> /etc/environment
 sudo echo export "PROFILE='${aws_profile}'" >> /etc/environment
+sudo echo export "SNS_TOPIC_ARN='${sns_topic_arn}'" >> /etc/environment
+
 
 
 # cd /etc/systemd/system
