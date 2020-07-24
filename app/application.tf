@@ -489,7 +489,22 @@ resource "aws_iam_policy" "CircleCI-Lambda" {
         "lambda:*"
         ],
         
+      
       "Resource": "arn:aws:lambda:${var.region}:${var.user_account_id}:function:${aws_lambda_function.func_lambda.function_name}"
+    },
+    
+      
+
+    {
+      "Effect": "Allow",
+      "Action": [
+        
+        "s3:PutObject",
+        "s3:Get*",
+        "s3:List*"
+        ],
+
+      "Resource": "arn:aws:s3:::lambda.ankitpatro.me"
     }
   ]
 }
