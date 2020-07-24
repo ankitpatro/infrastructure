@@ -238,6 +238,269 @@ resource "aws_iam_user_policy_attachment" "test-attach4" {
 
 }
 
+#----------------------- Create IAM Lambda Role ------------------
+
+resource "aws_iam_role" "iam_for_lambda" {
+  name = "iam_for_lambda"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
+
+# ============================== SNS Topic ===================================
+
+resource "aws_sns_topic" "email_request" {
+  name = "email_request"
+  delivery_policy = <<EOF
+{
+  "http": {
+    "defaultHealthyRetryPolicy": {
+      "minDelayTarget": 20,
+      "maxDelayTarget": 20,
+      "numRetries": 3,
+      "numMaxDelayRetries": 0,
+      "numNoDelayRetries": 0,
+      "numMinDelayRetries": 0,
+      "backoffFunction": "linear"
+    },
+    "disableSubscriptionOverrides": false,
+    "defaultThrottlePolicy": {
+      "maxReceivesPerSecond": 1
+    } }}
+EOF
+} 
+
+#======================SNS_POLICY==========================
+
+resource "aws_iam_policy" "sns_policy" {
+  name        = "test_policy"
+  path        = "/"
+  description = "My test policy"
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "SNS:Publish"
+      ],
+      "Resource": "${aws_sns_topic.email_request.arn}"
+    }
+  ]
+}
+EOF
+}
+#====Attaching sns policy with code deploy role================
+resource "aws_iam_role_policy_attachment" "snspolicy_role_attach2" {
+  role       = "${aws_iam_role.EC2-CSYE6225.name}"
+  policy_arn = "${aws_iam_policy.sns_policy.arn}"
+}
+
+#===========Attaching sns policy with lambda role===========
+resource "aws_iam_role_policy_attachment" "snspolicy_role_attach1" {
+  role       = "${aws_iam_role.iam_for_lambda.name}"
+  policy_arn = "${aws_iam_policy.sns_policy.arn}"
+}
+
+#----------------S3 Bucket for lambda --------------
+# resource "aws_s3_bucket" "lambda_bucket" {
+# 	bucket = "lambda1.${var.domain_name}"
+# 	acl    = "private"
+# 	force_destroy = "true"
+# 	tags = "${
+#       		map(
+#      		"Name", "${var.domain_name}",
+#     		)
+#   	}"
+# 	lifecycle_rule {
+# 	    id      = "log/"
+# 	    enabled = true
+# 		transition{
+# 			days = 30
+# 			storage_class = "STANDARD_IA"
+# 		}
+# 		expiration{
+# 			days = 60
+# 		}
+# 	}
+# }
+
+
+resource "aws_lambda_function" "func_lambda" {
+  # filename      = "csye6225_lambda0.0.1-SNAPSHOT"
+  function_name = "func_lambda"
+  role          = "${aws_iam_role.iam_for_lambda.arn}"
+  handler       = "LogEvent::handleRequest"
+  runtime	    = "java8"
+  # s3_bucket 	= "${aws_s3_bucket.lambda_bucket.bucket}"
+  s3_bucket = "lambda.ankitpatro.me"
+  s3_key      = "faas-1.0-SNAPSHOT.jar"
+  timeout        = 900
+  reserved_concurrent_executions = 1
+  memory_size = 256
+  depends_on     = ["aws_sns_topic.email_request"]
+   # Pass the SNS topic ARN and DynamoDB table name in the environment.
+  environment {
+      variables = "${
+      		map(
+     		"sns_arn", "${aws_sns_topic.email_request.arn}",
+            "dynamo_table_name", "${aws_dynamodb_table.snslambda_table.name}",
+            "ttlInMin",15
+    		)
+  	}"
+  }
+}
+
+
+
+#--------------------- Attach IAM Lambda Role with lambda Log Policies ------------
+resource "aws_iam_role_policy_attachment" "lambda_role_attach1" {
+  role = "${aws_iam_role.iam_for_lambda.name}"
+  policy_arn = "${aws_iam_policy.lambda_logging.arn}"
+}
+
+#===============Attach EC2 Code Deploy Role with lambda Log Policies
+resource "aws_iam_role_policy_attachment" "lambda_role_attach2" {
+  role       = "${aws_iam_role.EC2-CSYE6225.name}"
+  policy_arn = "${aws_iam_policy.lambda_logging.arn}"
+}
+
+#--------------------------- Create Lambda Policy -------------------
+
+resource "aws_iam_policy" "lambda_logging" {
+  name = "lambda_logging"
+  path = "/"
+  description = "IAM policy for logging from a lambda"
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": "arn:aws:logs:*:*:*",
+      "Effect": "Allow"
+    },
+    {
+      "Action": [
+        "ses:*"
+      ],
+      "Resource": "*",
+      "Effect": "Allow"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeStream",
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator",
+        "dynamodb:ListStreams","dynamodb:GetItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:PutItem",
+        "dynamodb:Scan",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:BatchGetItem",
+        "dynamodb:DescribeTable"
+      ],
+      "Resource": "${aws_dynamodb_table.snslambda_table.arn}"
+  }
+ 
+  ]
+}
+EOF
+}
+
+# ----------------------- Lambda SNS DynamoDB table ---------------------------------
+
+resource "aws_dynamodb_table" "snslambda_table" {
+	 name           = "snslambda"
+	 hash_key       = "username"
+	 read_capacity = "20"
+	 write_capacity = "20"
+     stream_enabled = true
+     stream_view_type = "KEYS_ONLY"
+	 attribute {
+		name = "username"
+		type = "S"
+  	}
+     ttl {
+      enabled = true
+      attribute_name = "ttl"
+    }
+  }
+
+    #-------------SNS permissions to invoke lambda function ---------------
+
+resource "aws_lambda_permission" "sns" {
+  statement_id  = "AllowExecutionFromSNSToLambda"
+  action        = "lambda:InvokeFunction"
+  function_name = "${aws_lambda_function.func_lambda.function_name}"
+  principal     = "sns.amazonaws.com"
+  source_arn = "${aws_sns_topic.email_request.arn}"
+} 
+
+#---------------- Subscribe Lambda function to SNS topic ---------------
+
+resource "aws_sns_topic_subscription" "sns_subscription" {
+  # depends_on = ["aws_lambda_function.func_lambda"]
+  topic_arn = "${aws_sns_topic.email_request.arn}"
+  protocol = "lambda"
+  endpoint = "${aws_lambda_function.func_lambda.arn}"
+}
+
+
+# not sure, if we need this or not
+
+# resource "aws_lb_target_group_attachment" "test" {
+#   target_group_arn = "${aws_lb_target_group.lb_tg.arn}"
+#   target_id        = "${aws_lambda_function.func_lambda.id}"
+#   port             = 80
+# }
+
+resource "aws_iam_policy" "CircleCI-Lambda" {
+  name = "circleci_s3_policy_lambda"
+  policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "lambda:*"
+        ],
+        
+      "Resource": "arn:aws:lambda:${var.region}:${var.user_account_id}:function:${aws_lambda_function.func_lambda.function_name}"
+    }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_user_policy_attachment" "circleci_lambda_policy_attach" {
+  user = "cicd"
+  policy_arn = "${aws_iam_policy.CircleCI-Lambda.arn}"
+}
+
 #----------Application security Group ---------------------
 
 resource "aws_security_group" "application" {
@@ -349,7 +612,8 @@ resource "aws_launch_configuration" "asg_launch_config" {
 			aws_db_username = "${aws_db_instance.WebAppRDS.username}",
 			aws_db_password = "${aws_db_instance.WebAppRDS.password}",
 			aws_region = "${var.region}",
-			aws_profile = "${var.profile}"
+			aws_profile = "${var.profile}",
+      sns_topic_arn = "${aws_sns_topic.email_request.arn}"
 		})}"
 
   iam_instance_profile = "${aws_iam_instance_profile.instance_profile1.name}"
