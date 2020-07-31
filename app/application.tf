@@ -593,7 +593,7 @@ resource "aws_security_group" "loadbalancer" {
   vpc_id        = "${var.vpcop_id}"
   ingress{
     from_port   = 80
-    to_port     = 80
+    to_port     = 443
     protocol    = "tcp"
     cidr_blocks  = ["0.0.0.0/0"]
   }
@@ -749,8 +749,9 @@ resource "aws_lb" "alb" {
 
 resource "aws_lb_listener" "lb_listener1" {
   load_balancer_arn = "${aws_lb.alb.arn}"
-  port              = "80"
-  protocol          = "HTTP"
+  port              = "443"
+  protocol          = "HTTPS"
+  certificate_arn = "arn:aws:acm:us-east-1:684177922449:certificate/a8d3d7d0-6327-49c2-880d-7c5b055b3f25"
   default_action {
     type             = "forward"
     target_group_arn = "${aws_lb_target_group.lb_tg.arn}"
@@ -903,10 +904,19 @@ resource "aws_db_instance" "WebAppRDS" {
   vpc_security_group_ids = ["${aws_security_group.database.id}"]
   db_subnet_group_name   = "${aws_db_subnet_group.webapp_rds_subgroup.name}"
   skip_final_snapshot    = true
-
-
-  #   parameter_group_name = "default.postgres12.2"
+  parameter_group_name = "${aws_db_parameter_group.sslgroup.name}"
+  storage_encrypted = "true"
 }
+
+ resource "aws_db_parameter_group" "sslgroup" {
+  name   = "sslgroup"
+  family = "postgres12"
+
+  parameter {
+    name  = "rds.force_ssl"
+    value = "1"
+    }
+ }
 
 #----------EC2 Instance ---------------------
 
@@ -1057,16 +1067,3 @@ resource "aws_route53_record" "route" {
     evaluate_target_health = true
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
