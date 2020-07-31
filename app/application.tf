@@ -522,15 +522,15 @@ resource "aws_security_group" "application" {
   name        = "WebApp Application Security Group"
   description = "Allow traffic for Webapp"
   vpc_id      = "${var.vpcop_id}"
-  ingress {
-    description = "TLS from VPC"
-    # cidr_blocks = ["0.0.0.0/0"]
-    # cidr_blocks = "${var.VPC_cidrBlock}"
-    from_port = 22
-    to_port   = 22
-    protocol  = "tcp"
-    security_groups = ["${aws_security_group.loadbalancer.id}"]
-  }
+  # ingress {
+  #   description = "TLS from VPC"
+  #   # cidr_blocks = ["0.0.0.0/0"]
+  #   # cidr_blocks = "${var.VPC_cidrBlock}"
+  #   from_port = 22
+  #   to_port   = 22
+  #   protocol  = "tcp"
+  #   security_groups = ["${aws_security_group.loadbalancer.id}"]
+  # }
   ingress {
     # cidr_blocks = ["0.0.0.0/0"]
     # cidr_blocks = "${var.VPC_cidrBlock}"
